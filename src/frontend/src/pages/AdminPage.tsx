@@ -68,8 +68,8 @@ export function AdminPage() {
   const isInitializing = loginStatus === "initializing";
   const isLoggingIn = loginStatus === "logging-in";
   const isLoginError = loginStatus === "loginError";
-  const isLoggedIn =
-    (loginStatus === "success" || loginStatus === "logging-in") && !!identity;
+  // Logged in if we have an identity (whether from stored session or fresh login)
+  const isLoggedIn = !!identity;
 
   const {
     data: isAdmin,
@@ -90,13 +90,21 @@ export function AdminPage() {
   const [tagsInput, setTagsInput] = useState("");
   const [breakingNewsInput, setBreakingNewsInput] = useState(breakingNews);
   const [claimingAdmin, setClaimingAdmin] = useState(false);
+  const [claimAttempted, setClaimAttempted] = useState(false);
 
   document.title = "Admin Panel — Insight Today";
 
   // Automatically try to claim first admin after login
   useEffect(() => {
-    if (isLoggedIn && actor && isAdmin === false && !claimingAdmin) {
+    if (
+      isLoggedIn &&
+      actor &&
+      isAdmin === false &&
+      !claimingAdmin &&
+      !claimAttempted
+    ) {
       setClaimingAdmin(true);
+      setClaimAttempted(true);
       actor
         .claimFirstAdmin()
         .then((claimed) => {
@@ -108,7 +116,7 @@ export function AdminPage() {
         })
         .catch(() => setClaimingAdmin(false));
     }
-  }, [isLoggedIn, actor, isAdmin, claimingAdmin, refetchAdmin]);
+  }, [isLoggedIn, actor, isAdmin, claimingAdmin, claimAttempted, refetchAdmin]);
 
   if (!isLoggedIn) {
     const buttonDisabled = isInitializing || isLoggingIn;
@@ -189,7 +197,7 @@ export function AdminPage() {
         <Loader2 className="animate-spin mx-auto mb-4" size={32} />
         <p className="text-muted-foreground">
           {claimingAdmin
-            ? "Setting up admin access..."
+            ? "Setting up your admin access..."
             : "Verifying admin access..."}
         </p>
       </main>
@@ -202,10 +210,40 @@ export function AdminPage() {
         className="container mx-auto px-4 py-20 text-center"
         data-ocid="admin.error_state"
       >
-        <h1 className="font-display text-2xl mb-4">Access Denied</h1>
-        <p className="text-muted-foreground">
-          You do not have admin privileges.
-        </p>
+        <div className="max-w-sm mx-auto">
+          <h1 className="font-display text-2xl mb-4">Access Denied</h1>
+          <p className="text-muted-foreground mb-6">
+            You do not have admin privileges. If you are the site owner, click
+            the button below to claim admin access. This only works once -- for
+            the first person to claim it.
+          </p>
+          <Button
+            onClick={() => {
+              if (!actor) return;
+              setClaimingAdmin(true);
+              actor
+                .claimFirstAdmin()
+                .then((claimed) => {
+                  if (claimed) {
+                    toast.success("Admin access granted! Welcome.");
+                    refetchAdmin();
+                  } else {
+                    toast.error(
+                      "Admin has already been claimed by another account.",
+                    );
+                  }
+                  setClaimingAdmin(false);
+                })
+                .catch(() => {
+                  toast.error("Failed to claim admin. Please try again.");
+                  setClaimingAdmin(false);
+                });
+            }}
+            data-ocid="admin.claim_button"
+          >
+            Claim Admin Access
+          </Button>
+        </div>
       </main>
     );
   }
@@ -519,7 +557,11 @@ export function AdminPage() {
                         </TableCell>
                         <TableCell>
                           <span
-                            className={`text-xs font-semibold px-2 py-0.5 rounded ${article.isPublished ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}
+                            className={`text-xs font-semibold px-2 py-0.5 rounded ${
+                              article.isPublished
+                                ? "bg-emerald-100 text-emerald-700"
+                                : "bg-amber-100 text-amber-700"
+                            }`}
                           >
                             {article.isPublished ? "Published" : "Draft"}
                           </span>

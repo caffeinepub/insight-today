@@ -73,23 +73,25 @@ actor {
 
   var breakingNews : Text = "";
 
-  // Kept for upgrade compatibility -- superseded by storedAdminPrincipal
-  stable var firstAdminClaimed : Bool = false;
+  // Bumped to 2 to force admin slot reset on this upgrade
+  stable var adminResetVersion : Nat = 0;
+  let CURRENT_RESET_VERSION : Nat = 2;
 
-  // Stable storage for admin principal -- survives all upgrades and redeployments
+  stable var firstAdminClaimed : Bool = false;
   stable var storedAdminPrincipal : ?Principal = null;
 
-  // Claim admin access:
-  // - First call ever: assigns the caller as permanent admin
-  // - If caller is the stored admin: re-grants access (handles upgrade wipes)
-  // - Anyone else: returns false
-  public shared ({ caller }) func claimFirstAdmin() : async Bool {
-    if (caller.isAnonymous()) {
-      return false;
+  system func postupgrade() {
+    if (adminResetVersion < CURRENT_RESET_VERSION) {
+      storedAdminPrincipal := null;
+      firstAdminClaimed := false;
+      adminResetVersion := CURRENT_RESET_VERSION;
     };
+  };
+
+  public shared ({ caller }) func claimFirstAdmin() : async Bool {
+    if (caller.isAnonymous()) { return false };
     switch (storedAdminPrincipal) {
       case (null) {
-        // No admin stored yet -- this caller becomes the permanent admin
         storedAdminPrincipal := ?caller;
         firstAdminClaimed := true;
         AccessControl.assignRole(accessControlState, caller, caller, #admin);
@@ -97,7 +99,6 @@ actor {
       };
       case (?adminPrincipal) {
         if (caller == adminPrincipal) {
-          // Original admin re-claiming after an upgrade wiped in-memory state
           AccessControl.assignRole(accessControlState, caller, caller, #admin);
           return true;
         };
@@ -106,19 +107,13 @@ actor {
     };
   };
 
-  // Auto-register any signed-in user as a regular user
   public shared ({ caller }) func registerUser() : async Bool {
-    if (caller.isAnonymous()) {
-      return false;
-    };
-    if (AccessControl.hasPermission(accessControlState, caller, #user)) {
-      return true; // already registered
-    };
+    if (caller.isAnonymous()) { return false };
+    if (AccessControl.hasPermission(accessControlState, caller, #user)) { return true };
     AccessControl.assignRole(accessControlState, caller, caller, #user);
     true;
   };
 
-  // User Profile Management
   public query ({ caller }) func getCallerUserProfile() : async ?UserProfile {
     if (not (AccessControl.hasPermission(accessControlState, caller, #user))) {
       Runtime.trap("Unauthorized: Only users can view profiles");
@@ -140,11 +135,10 @@ actor {
     userProfiles.add(caller, profile);
   };
 
-  // Article Management
   public query ({ caller }) func getArticleById(id : Nat) : async Article {
     switch (articles.get(id)) {
       case (null) { Runtime.trap("Article not found") };
-      case (?article) { return article };
+      case (?article) { article };
     };
   };
 
@@ -163,9 +157,7 @@ actor {
 
   public query ({ caller }) func getArticlesByCategory(category : ArticleCategory) : async [Article] {
     articles.values().toArray().filter(
-      func(article) {
-        article.category == category;
-      }
+      func(article) { article.category == category }
     );
   };
 
@@ -174,11 +166,7 @@ actor {
       Runtime.trap("Unauthorized: Only admins can create articles");
     };
     let id = nextArticleId;
-    let newArticle : Article = {
-      article with
-      id;
-      publishedDate = Time.now();
-    };
+    let newArticle : Article = { article with id; publishedDate = Time.now() };
     articles.add(id, newArticle);
     nextArticleId += 1;
     id;
@@ -189,11 +177,7 @@ actor {
       Runtime.trap("Unauthorized: Only admins can update articles");
     };
     ignore getArticleById(id);
-    let updatedArticle : Article = {
-      article with
-      id;
-    };
-    articles.add(id, updatedArticle);
+    articles.add(id, { article with id });
   };
 
   public shared ({ caller }) func deleteArticle(id : Nat) : async () {
@@ -205,24 +189,16 @@ actor {
     comments.remove(id);
   };
 
-  // Comments (public - no authorization required)
   public shared ({ caller }) func addComment(articleId : Nat, author : Text, text : Text) : async () {
     ignore getArticleById(articleId);
-    let newComment : Comment = {
-      articleId;
-      author;
-      text;
-      timestamp = Time.now();
-    };
+    let newComment : Comment = { articleId; author; text; timestamp = Time.now() };
     switch (comments.get(articleId)) {
       case (null) {
         let newList = List.empty<Comment>();
         newList.add(newComment);
         comments.add(articleId, newList);
       };
-      case (?existingList) {
-        existingList.add(newComment);
-      };
+      case (?existingList) { existingList.add(newComment) };
     };
   };
 
@@ -233,22 +209,10 @@ actor {
     };
   };
 
-  // Newsletter -- open to anyone (no login required)
   public shared ({ caller }) func subscribeToNewsletter(email : Text) : async () {
-    let newSubscription : NewsletterSubscription = {
-      email;
-      subscribedAt = Time.now();
-    };
-
-    let exists = newsletterSubscribers.any(
-      func(subscription) {
-        subscription.email == email;
-      }
-    );
-
+    let exists = newsletterSubscribers.any(func(s) { s.email == email });
     if (exists) { Runtime.trap("Email already subscribed to the newsletter") };
-
-    newsletterSubscribers.add(newSubscription);
+    newsletterSubscribers.add({ email; subscribedAt = Time.now() });
   };
 
   public query ({ caller }) func getNewsletterSubscribers() : async [NewsletterSubscription] {
@@ -258,10 +222,7 @@ actor {
     newsletterSubscribers.values().toArray();
   };
 
-  // Breaking News Management
-  public query ({ caller }) func getBreakingNews() : async Text {
-    breakingNews;
-  };
+  public query ({ caller }) func getBreakingNews() : async Text { breakingNews };
 
   public shared ({ caller }) func setBreakingNews(news : Text) : async () {
     if (not (AccessControl.hasPermission(accessControlState, caller, #admin))) {
